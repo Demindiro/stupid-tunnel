@@ -19,13 +19,17 @@ impl Client {
 
 	pub fn run(self) -> Result<!, RunError> {
 
+		let mut buf = [0; 0x10000];
+
 		debug!("Connecting to server");
 		let mut server = net::TcpStream::connect(self.server_address)
 			.map_err(RunError::ConnectError)?;
 
 		debug!("Creating interface");
 		let mut tun = tun::Tun::new(&self.name[..15]).unwrap();
-		let mut buf = [0; 0x10000];
+
+		debug!("Adding IP address");
+		tun.add_ipv6_address(net::Ipv6Addr::new(0xabcd, 0xef00, 0, 0, 0, 0, 0, 0x1001));
 
 		loop {
 			let len = tun.read(&mut buf).unwrap();

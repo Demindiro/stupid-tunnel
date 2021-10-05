@@ -30,6 +30,58 @@ impl Tun {
 
 		Ok(Self { fd })
 	}
+
+	pub fn add_ipv6_address(&mut self, ip: std::net::Ipv6Addr) {
+		// TODO use rtnetlink directly
+		std::process::Command::new("ip")
+			.args(["-6", "addr", "add", &*format!("{}/96", ip), "dev", "stupid_tunnel"])
+			.output()
+			.unwrap();
+		std::process::Command::new("ip")
+			.args(["-6", "link", "set", "stupid_tunnel", "up"])
+			.output()
+			.unwrap();
+		/*
+		#[repr(C)]
+		struct IfAddrMsg {
+			family: u8,
+			prefix_length: u8,
+			flags: u8,
+			scope: u8,
+			index: u32,
+		};
+
+		#[repr(C)]
+		struct Request {
+			n: libc::nlmsghdr,
+			ifa: IfAddrMsg,
+		}
+
+		let r = Request {
+			n: libc::nlmsghdr {
+				nlmsg_len: mem::size_of::<Request>().try_into().unwrap(),
+				nlmsg_type: libc::RTM_NEWADDR.try_into().unwrap(),
+				nlmsg_flags: (libc::NLM_F_CREATE | libc::NLM_F_EXCL | libc::NLM_F_REQUEST).try_into().unwrap(),
+				nlmsg_pid: 0,
+				nlmsg_seq: 0,
+			},
+			ifa: IfAddrMsg {
+				family: libc::AF_INET6.try_into().unwrap(),
+				prefix_length: 128 - 32,
+				flags: 0,
+				scope: 0,
+				index: 85,
+			}
+		};
+
+		unsafe {
+			let nl = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE);
+			assert!(nl >= 0);
+			libc::send(nl, &r as *const _ as *const _, mem::size_of_val(&r), 0);
+			libc::close(nl);
+		}
+		*/
+	}
 }
 
 impl Drop for Tun {
