@@ -3,12 +3,21 @@
 #[macro_use]
 mod log;
 
+macro_rules! from_be_fn {
+	($name:ident, $ty:ty) => {
+		pub fn $name(&self) -> $ty {
+			<$ty>::from_be_bytes(self.$name)
+		}
+	}
+}
+
 mod client;
 mod icmp;
 mod ip;
 mod udp;
 mod server;
 mod stupid;
+mod tcp;
 mod tun;
 mod ifreq;
 

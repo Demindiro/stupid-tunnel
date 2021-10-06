@@ -18,7 +18,7 @@ impl IPv6Header {
 
 	pub fn new(payload_length: u16, next_header: u8, hop_limit: u8, source_address: Ipv6Addr, destination_address: Ipv6Addr) -> Self {
 		Self {
-			head: [Self::VERSION, 0, 0, 0],
+			head: [Self::VERSION << 4, 0, 0, 0],
 			payload_length: payload_length.to_be_bytes(),
 			next_header,
 			hop_limit,
