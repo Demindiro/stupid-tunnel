@@ -55,11 +55,16 @@ impl Client {
 							);
 
 							let mut out = [0; 0x10000];
+							dbg!(core::str::from_utf8(data));
 
 							match tcp_connections.entry(k) {
 								Entry::Occupied(mut e) => {
 									e.get_mut().receive(tcp, data, &mut out).unwrap()
 										.map(|out| tun.write(out).unwrap());
+									if data.len() > 0 {
+										let out = e.get_mut().send(data, &mut out).unwrap();
+										tun.write(out).unwrap();
+									}
 								}
 								Entry::Vacant(e) => {
 									let out = if tcp.flags.synchronize() {

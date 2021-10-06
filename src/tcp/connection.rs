@@ -30,7 +30,7 @@ impl Tcp6Connection {
 			slf.sequence_num,
 			slf.acknowledge_num,
 			Flags::new().set_acknowledge(true).set_synchronize(true),
-			tcp.window(),
+			0xffff,
 			Options::NONE,
 			&[],
 		);
@@ -56,13 +56,17 @@ impl Tcp6Connection {
 
 		self.acknowledge_num = self.acknowledge_num.wrapping_add(data.len() as u32);
 
+		if data.is_empty() {
+			return Ok(None);
+		}
+
 		let tcp = TcpHeader::new(
 			(self.local_ip, self.local_port),
 			(self.remote_ip, self.remote_port),
 			self.sequence_num,
 			self.acknowledge_num,
 			Flags::new().set_acknowledge(true),
-			tcp.window(),
+			0xffff,
 			Options::NONE,
 			&[],
 		);
@@ -81,14 +85,32 @@ impl Tcp6Connection {
 		Ok(Some(&out[..len]))
 	}
 
-	pub fn send(&mut self, data: &[u8], out: &mut [u8]) -> Result<(), ()> {
-		todo!();
-		let tcp = TcpHeader::default();
-		//	.set
-		let ip = IPv6Header::default()
+	pub fn send<'a>(&mut self, data: &[u8], out: &'a mut [u8]) -> Result<&'a [u8], ()> {
+
+		let tcp = TcpHeader::new(
+			(self.local_ip, self.local_port),
+			(self.remote_ip, self.remote_port),
+			self.sequence_num,
+			self.acknowledge_num,
+			Flags::new().set_acknowledge(true),
+			0xffff,
+			Options::NONE,
+			data,
+		);
+
+		let ip = *IPv6Header::default()
 			.set_hop_limit(64)
 			.set_next_header(6)
 			.set_source_address(self.local_ip)
-			.set_destination_address(self.remote_ip);
+			.set_destination_address(self.remote_ip)
+			.set_payload_length(tcp.length(data).unwrap());
+
+		out[..ip.byte_len()].copy_from_slice(ip.as_ref());
+		out[ip.byte_len()..][..tcp.byte_len()].copy_from_slice(tcp.as_ref());
+		out[ip.byte_len()..][tcp.byte_len()..][..data.len()].copy_from_slice(data);
+
+		self.sequence_num = self.sequence_num.wrapping_add(data.len() as u32);
+		
+		Ok(&out[..ip.byte_len() + tcp.byte_len() + data.len()])
 	}
 }
