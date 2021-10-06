@@ -55,16 +55,37 @@ impl IPv6Header {
 		Ipv6Addr::from(self.source_address)
 	}
 
-	pub fn set_source_address(&mut self, address: Ipv6Addr) {
+	pub fn set_source_address(&mut self, address: Ipv6Addr) -> &mut Self {
 		self.source_address = address.octets();
+		self
 	}
 
 	pub fn destination_address(&self) -> Ipv6Addr {
 		Ipv6Addr::from(self.destination_address)
 	}
 
-	pub fn set_destination_address(&mut self, address: Ipv6Addr) {
+	pub fn set_destination_address(&mut self, address: Ipv6Addr) -> &mut Self {
 		self.destination_address = address.octets();
+		self
+	}
+
+	pub fn set_next_header(&mut self, header: u8) -> &mut Self {
+		self.next_header = header;
+		self
+	}
+
+	pub fn set_hop_limit(&mut self, limit: u8) -> &mut Self {
+		self.hop_limit = limit;
+		self
+	}
+
+	pub fn set_payload_length(&mut self, length: u16) -> &mut Self {
+		self.payload_length = length.to_be_bytes();
+		self
+	}
+
+	pub fn byte_len(&self) -> usize {
+		mem::size_of_val(self)
 	}
 }
 
@@ -84,6 +105,12 @@ impl fmt::Debug for IPv6Header {
 impl AsRef<[u8; mem::size_of::<Self>()]> for IPv6Header {
 	fn as_ref(&self) -> &[u8; mem::size_of::<Self>()] {
 		unsafe { &*(self as *const _ as *const _) }
+	}
+}
+
+impl Default for IPv6Header {
+	fn default() -> Self {
+		Self::new(0, 0, 0, Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED)
 	}
 }
 

@@ -100,11 +100,22 @@ impl TcpHeader {
 			.finish();
 		Ok(sum)
 	}
+
+	/// Return the size of the header without options
+	pub fn byte_len(&self) -> usize {
+		mem::size_of_val(self)
+	}
 }
 
 impl AsRef<[u8; mem::size_of::<Self>()]> for TcpHeader {
 	fn as_ref(&self) -> &[u8; mem::size_of::<Self>()] {
 		unsafe { &*(self as *const _ as *const _) }
+	}
+}
+
+impl Default for TcpHeader {
+	fn default() -> Self {
+		Self::new((Ipv6Addr::UNSPECIFIED, 0), (Ipv6Addr::UNSPECIFIED, 0), 0, 0, Flags(0), 0, Options(&[]), &[])
 	}
 }
 
@@ -301,6 +312,15 @@ pub enum FromRawError {
 	BadChecksum,
 	Truncated,
 	BadOption,
+}
+
+pub struct Tcp6HeaderBuilder<'a> {
+	source_ip: Ipv6Addr,
+	source_port: u16,
+	destination_ip: Ipv6Addr,
+	destination_port: u16,
+	options: Options<'a>,
+	data: &'a [u8],
 }
 
 #[cfg(test)]
