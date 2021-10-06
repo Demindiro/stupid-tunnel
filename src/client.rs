@@ -1,4 +1,5 @@
 use crate::*;
+use std::collections::hash_map::{HashMap, Entry};
 use std::io::{Read, Write};
 use std::net;
 
@@ -19,6 +20,10 @@ impl Client {
 
 	pub fn run(self) -> Result<!, RunError> {
 
+		let mut tcp_connections = HashMap::<_, tcp::Tcp6Connection>::new();
+		let mut init_seq_n = 2930232;
+		let init_seq_n_offt = 239020923;
+
 		let mut buf = [0; 0x10000];
 
 		debug!("Connecting to server");
@@ -38,15 +43,48 @@ impl Client {
 			while !buf.is_empty() {
 				match ip::IPv6Header::from_raw(&buf[..len]) {
 					Ok((header, extra)) => {
-						dbg!(header);
 						if header.next_header == 6 {
 							// TCP
-							let (pkt, opt, data) = tcp::TcpHeader::from_raw_ipv6(extra, header.source_address(), header.destination_address()).unwrap();
+							let (tcp, opt, data) = tcp::TcpHeader::from_raw_ipv6(extra, header.source_address(), header.destination_address()).unwrap();
+
+							let k = (
+								header.source_address(),
+								tcp.source(),
+								header.destination_address(),
+								tcp.destination(),
+							);
 
 							let mut out = [0; 0x10000];
-							if pkt.flags.synchronize() {
-								let (conn, out) = tcp::Tcp6Connection::new(header, pkt, opt, 2380923, &mut out);
-								tun.write(out).unwrap();
+
+							match tcp_connections.entry(k) {
+								Entry::Occupied(mut e) => {
+									e.get_mut().receive(tcp, data, &mut out).unwrap()
+										.map(|out| tun.write(out).unwrap());
+								}
+								Entry::Vacant(e) => {
+									let out = if tcp.flags.synchronize() {
+										let (conn, out) = tcp::Tcp6Connection::new(header, tcp, opt, init_seq_n, &mut out);
+										init_seq_n = init_seq_n.wrapping_add(init_seq_n_offt);
+										e.insert(conn);
+										out
+									} else {
+										let tcp = tcp::TcpHeader::new(
+											(header.destination_address(), tcp.destination()),
+											(header.source_address(), tcp.source()),
+											0,
+											0,
+											tcp::Flags::new().set_reset(true),
+											0,
+											tcp::Options::NONE,
+											&[],
+										);
+										let ip = ip::IPv6Header::new(tcp.length(&[]).unwrap(), 6, 255, header.destination_address(), header.source_address());
+										out[..ip.byte_len()].copy_from_slice(ip.as_ref());
+										out[ip.byte_len()..][..tcp.byte_len()].copy_from_slice(tcp.as_ref());
+										&out[..ip.byte_len() + tcp.byte_len()]
+									};
+									tun.write(out).unwrap();
+								}
 							}
 						} else if header.next_header == 17 {
 							// UDP

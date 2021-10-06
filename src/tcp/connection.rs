@@ -20,6 +20,7 @@ impl Tcp6Connection {
 			remote_ip: ip.source_address(),
 			remote_port: tcp.source(),
 			sequence_num,
+			// SYN increases the ACK by 1
 			acknowledge_num: tcp.sequence_num().wrapping_add(1),
 		};
 
@@ -34,6 +35,7 @@ impl Tcp6Connection {
 			&[],
 		);
 
+		// We're sending SYN, so increment by 1
 		slf.sequence_num = slf.sequence_num.wrapping_add(1);
 
 		let ip = IPv6Header::new(tcp.length(&[]).unwrap(), 6, 255, slf.local_ip, slf.remote_ip);
@@ -50,9 +52,33 @@ impl Tcp6Connection {
 		(slf, &out[..len])
 	}
 
-	pub fn receive(&mut self, tcp: &TcpHeader, out: &mut [u8]) -> Result<(), ()> {
+	pub fn receive<'a>(&mut self, tcp: &TcpHeader, data: &[u8], out: &'a mut [u8]) -> Result<Option<&'a [u8]>, ()> {
 
-		todo!()
+		self.acknowledge_num = self.acknowledge_num.wrapping_add(data.len() as u32);
+
+		let tcp = TcpHeader::new(
+			(self.local_ip, self.local_port),
+			(self.remote_ip, self.remote_port),
+			self.sequence_num,
+			self.acknowledge_num,
+			Flags::new().set_acknowledge(true),
+			tcp.window(),
+			Options::NONE,
+			&[],
+		);
+
+		let ip = IPv6Header::new(tcp.length(&[]).unwrap(), 6, 255, self.local_ip, self.remote_ip);
+
+		let ip_o = 0;
+		let tcp_o = ip_o + ip.byte_len();
+		let len = tcp_o + tcp.byte_len();
+
+		assert!(out.len() >= len);
+
+		out[ip_o..tcp_o].copy_from_slice(ip.as_ref());
+		out[tcp_o..len].copy_from_slice(tcp.as_ref());
+
+		Ok(Some(&out[..len]))
 	}
 
 	pub fn send(&mut self, data: &[u8], out: &mut [u8]) -> Result<(), ()> {
