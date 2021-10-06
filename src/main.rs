@@ -11,6 +11,7 @@ macro_rules! from_be_fn {
 	}
 }
 
+mod checksum;
 mod client;
 mod icmp;
 mod ip;
@@ -23,6 +24,8 @@ mod ifreq;
 
 use std::env;
 use std::net;
+
+use checksum::Checksum;
 
 fn main() -> ! {
 	

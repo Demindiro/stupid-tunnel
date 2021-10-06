@@ -1,5 +1,6 @@
 //! https://datatracker.ietf.org/doc/html/rfc793
 
+use crate::Checksum;
 use core::fmt;
 use core::mem;
 use std::net::Ipv6Addr;
@@ -73,35 +74,31 @@ impl TcpHeader {
 	}
 
 	fn checksum_ipv6(&self, source: Ipv6Addr, destination: Ipv6Addr, options: Options, data: &[u8]) -> Result<u16, ChecksumError> {
-		dbg!(options);
-		let mut sum = 0usize;
 		let (src, dest) = (source.octets(), destination.octets());
 		let tcp_length = u16::try_from(
 			mem::size_of_val(self) +
 			((options.0.len() + 3) & !3) +
 			data.len()
 		).map_err(|_| ChecksumError::DataTooLarge)?.to_be_bytes();
-		let mut chain = src.iter()
-			.chain(&dest)
-			.chain(&[0, 6]) // zero, protocol
-			.chain(&tcp_length)
-			.chain(&self.source)
-			.chain(&self.destination)
-			.chain(&self.sequence_num)
-			.chain(&self.acknowledge_num)
-			.chain(core::slice::from_ref(&self.data_offset))
-			.chain(core::slice::from_ref(&self.flags.0))
-			.chain(&self.window)
-			.chain(&self.checksum)
-			.chain(&self.urgent_pointer)
-			.chain(options.0)
-			.chain(data)
-			.copied();
-		while let Some(a) = chain.next() {
-			let n = [a, chain.next().unwrap_or(0)];
-			sum = sum.wrapping_add(u16::from_be_bytes(n).into());
-		}
-		Ok((sum as u16 + (sum >> 16) as u16) ^ 0xffff)
+
+		let sum = Checksum::new()
+			.feed_ref(&src)
+			.feed_ref(&dest)
+			.feed_ref(&[0, 6]) // zero, protocol
+			.feed_ref(&tcp_length)
+			.feed_ref(&self.source)
+			.feed_ref(&self.destination)
+			.feed_ref(&self.sequence_num)
+			.feed_ref(&self.acknowledge_num)
+			.feed_ref(core::slice::from_ref(&self.data_offset))
+			.feed_ref(core::slice::from_ref(&self.flags.0))
+			.feed_ref(&self.window)
+			.feed_ref(&self.checksum)
+			.feed_ref(&self.urgent_pointer)
+			.feed_ref(options.0)
+			.feed_ref(data)
+			.finish();
+		Ok(sum)
 	}
 }
 
@@ -304,4 +301,17 @@ pub enum FromRawError {
 	BadChecksum,
 	Truncated,
 	BadOption,
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn checksum() {
+		let src = Ipv6Addr::LOCALHOST;
+		let dst = Ipv6Addr::UNSPECIFIED;
+		let tcp = TcpHeader::new((src, 232), (dst, 244), 58, 23, Flags(23), 22, Options(&[1, 1, 2, 4, 5, 24]), b"gutentag");
+		assert_eq!(tcp.checksum(), 55718);
+	}
 }

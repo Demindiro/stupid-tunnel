@@ -1,3 +1,4 @@
+use crate::Checksum;
 use core::fmt;
 use core::mem;
 use std::net::Ipv6Addr;
@@ -47,24 +48,23 @@ impl UDPHeader {
 		u16::from_be_bytes(self.length) - u16::try_from(mem::size_of_val(self)).unwrap()
 	}
 
+	from_be_fn!(checksum, u16);
+
 	fn checksum_ipv6(&self, source: Ipv6Addr, destination: Ipv6Addr, data: &[u8]) -> Result<u16, ChecksumError> {
 		let mut sum = 0usize;
 		let (src, dest) = (source.octets(), destination.octets());
 		let udp_length = u16::try_from(mem::size_of_val(self) + data.len()).map_err(|_| ChecksumError::DataTooLarge)?.to_be_bytes();
-		let mut chain = src.iter()
-			.chain(&dest)
-			.chain(&[0, 17]) // zero, protocol
-			.chain(&udp_length)
-			.chain(&self.source_port)
-			.chain(&self.destination_port)
-			.chain(&self.length)
-			.chain(data)
-			.copied();
-		while let Some(a) = chain.next() {
-			let n = [a, chain.next().unwrap_or(0)];
-			sum = sum.wrapping_add(u16::from_be_bytes(n).into());
-		}
-		Ok((sum as u16 + (sum >> 16) as u16) ^ 0xffff)
+		let sum = Checksum::new()
+			.feed_ref(&src)
+			.feed_ref(&dest)
+			.feed_ref(&[0, 17]) // zero, protocol
+			.feed_ref(&udp_length)
+			.feed_ref(&self.source_port)
+			.feed_ref(&self.destination_port)
+			.feed_ref(&self.length)
+			.feed_ref(data)
+			.finish();
+		Ok(sum)
 	}
 }
 
@@ -94,4 +94,17 @@ pub enum FromRawError {
 #[derive(Debug)]
 pub enum ChecksumError {
 	DataTooLarge,
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn checksum() {
+		let src = Ipv6Addr::LOCALHOST;
+		let dst = Ipv6Addr::UNSPECIFIED;
+		let udp = UDPHeader::new_ipv6(src, 232, dst, 244, b"gutentag").unwrap();
+		assert_eq!(udp.checksum(), 21051);
+	}
 }
