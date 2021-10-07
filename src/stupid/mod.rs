@@ -2,7 +2,7 @@ mod client;
 
 use core::mem;
 use core::fmt;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 pub use client::StupidClient;
 
@@ -37,41 +37,45 @@ pub struct InvalidType;
 #[repr(C)]
 pub struct StupidDataHeader {
 	ty: u8,
-	address: [u8; 4],
-	port: [u8; 2],
+	remote_ip: [u8; 4],
+	remote_port: [u8; 2],
+	local_port: [u8; 2],
 	data_length: [u8; 2],
 }
 
 impl StupidDataHeader {
-	pub fn from_raw(data: &[u8]) -> Result<(Self, &[u8]), FromRawError> {
+	pub fn from_raw(data: &[u8]) -> Result<(Self, &[u8], &[u8]), FromRawError> {
 		if data.len() < mem::size_of::<Self>() {
 			return Err(FromRawError::Truncated);
 		}
 
 		let (h, d) = data.split_at(mem::size_of::<Self>());
+		let h = unsafe { *h.as_ptr().cast::<Self>() };
+		let (d, e) = d.split_at(h.data_length().into());
 
-		unsafe { Ok((*h.as_ptr().cast(), d)) }
+		unsafe { Ok((h, d, e)) }
 	}
 
-	pub fn new(ty: StupidType, address: Ipv4Addr, port: u16, data_length: u16) -> Self {
+	pub fn new(ty: StupidType, remote: SocketAddrV4, local: u16, data_length: u16) -> Self {
 		Self {
 			ty: ty.into(),
-			address: address.octets(),
-			port: port.to_le_bytes(),
+			remote_ip: remote.ip().octets(),
+			remote_port: remote.port().to_le_bytes(),
+			local_port: local.to_le_bytes(),
 			data_length: data_length.to_le_bytes(),
 		}
 	}
 
-	pub fn address(&self) -> Ipv4Addr {
-		Ipv4Addr::from(self.address)
+	pub fn remote(&self) -> SocketAddrV4 {
+		SocketAddrV4::new(self.remote_ip.into(), u16::from_le_bytes(self.remote_port))
+	}
+
+	pub fn local(&self) -> u16 {
+		u16::from_le_bytes(self.local_port)
 	}
 
 	pub fn ty(&self) -> Result<StupidType, InvalidType> {
 		self.ty.try_into()
-	}
-
-	pub fn port(&self) -> u16 {
-		u16::from_le_bytes(self.port)
 	}
 
 	pub fn data_length(&self) -> u16 {
@@ -92,8 +96,8 @@ impl AsRef<[u8; mem::size_of::<Self>()]> for StupidDataHeader {
 impl fmt::Debug for StupidDataHeader {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct(stringify!(StupidDataHeader))
-			.field("address", &self.address())
-			.field("port", &self.port())
+			.field("remote", &self.remote())
+			.field("local", &self.local())
 			.field("data_length", &self.data_length())
 			.finish()
 	}

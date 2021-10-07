@@ -1,14 +1,17 @@
 use crate::ifreq::{IfReq, NewIfReqError};
 use core::mem;
-use libc::{c_int, c_ulong, ioctl};
+use libc::{c_ulong, ioctl};
 use std::io::{Error, Read, Write};
+use std::os::unix::io::RawFd;
+use mio::{Registry, Token, Interest};
+use mio::unix::SourceFd;
 
 pub struct Tun {
-	fd: c_int,
+	fd: RawFd,
 }
 
 impl Tun {
-	const SET_IFF: c_ulong = iow(b'T', 202, mem::size_of::<c_int>());
+	const SET_IFF: c_ulong = iow(b'T', 202, mem::size_of::<RawFd>());
 
 	pub fn new(name: &[u8]) -> Result<Self, NewTunError> {
 
@@ -109,6 +112,20 @@ impl Write for Tun {
 
 	fn flush(&mut self) -> Result<(), Error> {
 		Ok(())
+	}
+}
+
+impl mio::event::Source for Tun {
+	fn register(&mut self, registry: &Registry, token: Token, interest: Interest) -> Result<(), Error> {
+		SourceFd(&self.fd).register(registry, token, interest)
+	}
+
+	fn reregister(&mut self, registry: &Registry, token: Token, interest: Interest) -> Result<(), Error> {
+		SourceFd(&self.fd).reregister(registry, token, interest)
+	}
+
+	fn deregister(&mut self, registry: &Registry) -> Result<(), Error> {
+		SourceFd(&self.fd).deregister(registry)
 	}
 }
 

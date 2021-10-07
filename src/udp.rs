@@ -1,7 +1,7 @@
 use crate::Checksum;
 use core::fmt;
 use core::mem;
-use std::net::Ipv6Addr;
+use std::net::{Ipv6Addr, SocketAddrV6};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -24,15 +24,15 @@ impl UDPHeader {
 		unsafe { Ok((*h.as_ptr().cast::<Self>(), e)) }
 	}
 
-	pub fn new_ipv6(source: Ipv6Addr, source_port: u16, destination: Ipv6Addr, destination_port: u16, data: &[u8]) -> Result<Self, ChecksumError> {
+	pub fn new_ipv6(source: SocketAddrV6, destination: SocketAddrV6, data: &[u8]) -> Result<Self, ChecksumError> {
 		let length = u16::try_from(mem::size_of::<Self>() + data.len()).map_err(|_| ChecksumError::DataTooLarge)?.to_be_bytes();
 		let mut slf = Self {
-			source_port: source_port.to_be_bytes(), 
-			destination_port: destination_port.to_be_bytes(),
+			source_port: source.port().to_be_bytes(), 
+			destination_port: destination.port().to_be_bytes(),
 			length,
 			checksum: [0, 0],
 		};
-		slf.checksum = slf.checksum_ipv6(source, destination, data)?.to_be_bytes();
+		slf.checksum = slf.checksum_ipv6(*source.ip(), *destination.ip(), data)?.to_be_bytes();
 		Ok(slf)
 	}
 
@@ -49,6 +49,17 @@ impl UDPHeader {
 	}
 
 	from_be_fn!(checksum, u16);
+
+	/// Total length of the UDP packet (header + data)
+	pub fn length(&self, data: &[u8]) -> Result<u16, ()> {
+		let l = mem::size_of_val(self) * 4 + data.len();
+		l.try_into().map_err(|_| ())
+	}
+
+	/// Return the size of the header
+	pub fn byte_len(&self) -> usize {
+		mem::size_of_val(self)
+	}
 
 	fn checksum_ipv6(&self, source: Ipv6Addr, destination: Ipv6Addr, data: &[u8]) -> Result<u16, ChecksumError> {
 		let mut sum = 0usize;
