@@ -59,11 +59,25 @@ impl Client {
 
 							match tcp_connections.entry(k) {
 								Entry::Occupied(mut e) => {
-									e.get_mut().receive(tcp, data, &mut out).unwrap()
-										.map(|out| tun.write(out).unwrap());
-									if data.len() > 0 {
-										let out = e.get_mut().send(data, &mut out).unwrap();
-										tun.write(out).unwrap();
+									match e.get_mut().receive(tcp, data, &mut out).unwrap() {
+										tcp::Response::Acknowledge(r) => {
+											debug!("acknowledge");
+											tun.write(r).unwrap();
+											if data.len() > 0 {
+												let out = e.get_mut().send(data, &mut out).unwrap();
+												tun.write(out).unwrap();
+											}
+										},
+										tcp::Response::Finish(r) => {
+											debug!("finish");
+											tun.write(r).unwrap();
+											if data.len() > 0 {
+												let out = e.get_mut().send(data, &mut out).unwrap();
+												tun.write(out).unwrap();
+											}
+											e.remove();
+										},
+										tcp::Response::None => (),
 									}
 								}
 								Entry::Vacant(e) => {

@@ -52,12 +52,14 @@ impl Tcp6Connection {
 		(slf, &out[..len])
 	}
 
-	pub fn receive<'a>(&mut self, tcp: &TcpHeader, data: &[u8], out: &'a mut [u8]) -> Result<Option<&'a [u8]>, ()> {
+	pub fn receive<'a>(&mut self, tcp: &TcpHeader, data: &[u8], out: &'a mut [u8]) -> Result<Response<'a>, ()> {
 
 		self.acknowledge_num = self.acknowledge_num.wrapping_add(data.len() as u32);
 
-		if data.is_empty() {
-			return Ok(None);
+		if tcp.flags.finish() {
+			self.acknowledge_num = self.acknowledge_num.wrapping_add(1);
+		} else if data.is_empty() {
+			return Ok(Response::None);
 		}
 
 		let tcp = TcpHeader::new(
@@ -65,11 +67,13 @@ impl Tcp6Connection {
 			(self.remote_ip, self.remote_port),
 			self.sequence_num,
 			self.acknowledge_num,
-			Flags::new().set_acknowledge(true),
+			Flags::new().set_acknowledge(true).set_finish(tcp.flags.finish()),
 			0xffff,
 			Options::NONE,
 			&[],
 		);
+
+		tcp.flags.finish().then(|| self.sequence_num = self.sequence_num.wrapping_add(1));
 
 		let ip = IPv6Header::new(tcp.length(&[]).unwrap(), 6, 255, self.local_ip, self.remote_ip);
 
@@ -82,7 +86,11 @@ impl Tcp6Connection {
 		out[ip_o..tcp_o].copy_from_slice(ip.as_ref());
 		out[tcp_o..len].copy_from_slice(tcp.as_ref());
 
-		Ok(Some(&out[..len]))
+		if tcp.flags.finish() {
+			Ok(Response::Finish(&out[..len]))
+		} else {
+			Ok(Response::Acknowledge(&out[..len]))
+		}
 	}
 
 	pub fn send<'a>(&mut self, data: &[u8], out: &'a mut [u8]) -> Result<&'a [u8], ()> {
@@ -113,4 +121,10 @@ impl Tcp6Connection {
 		
 		Ok(&out[..ip.byte_len() + tcp.byte_len() + data.len()])
 	}
+}
+
+pub enum Response<'a> {
+	Acknowledge(&'a [u8]),
+	Finish(&'a [u8]),
+	None,
 }
