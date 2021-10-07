@@ -11,6 +11,8 @@ pub use client::StupidClient;
 pub enum StupidType {
 	TCP = 0,
 	UDP = 1,
+	TcpConnect = 2,
+	TcpFinish = 3,
 }
 
 impl From<StupidType> for u8 {
@@ -26,6 +28,8 @@ impl TryFrom<u8> for StupidType {
 		[
 			Self::TCP,
 			Self::UDP,
+			Self::TcpConnect,
+			Self::TcpFinish,
 		].get(usize::from(n)).copied().ok_or(InvalidType)
 	}
 }

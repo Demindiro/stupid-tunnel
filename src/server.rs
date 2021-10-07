@@ -53,10 +53,16 @@ impl Server {
 		let mut buf = [0; 0x10000];
 		let mut out = [0; 0x10000];
 
-		let mut udp_socks = unsafe {
+		let mut udp_socks: [Option<(UdpSocket, Instant)>; 0x10000] = unsafe {
 			use core::mem::MaybeUninit;
 			let mut a = MaybeUninit::uninit_array::<0x10000>();
-			a.iter_mut().for_each(|e| { e.write(None); });
+			a.fill_with(|| MaybeUninit::new(None));
+			MaybeUninit::array_assume_init(a)
+		};
+		let mut tcp_socks = unsafe {
+			use core::mem::MaybeUninit;
+			let mut a = MaybeUninit::uninit_array::<0x10000>();
+			a.fill_with(|| MaybeUninit::new(None));
 			MaybeUninit::array_assume_init(a)
 		};
 
@@ -65,8 +71,8 @@ impl Server {
 			poll.poll(&mut events, None).unwrap();
 
 			for e in &events {
-				let (ty, port) = (e.token().0 & EVENT_MASK, e.token().0 & !EVENT_MASK);
-				match e.token().0 & EVENT_MASK {
+				let (ty, local_port) = (e.token().0 & EVENT_MASK, e.token().0 & !EVENT_MASK);
+				match ty {
 					CLIENT_EVENT => {
 						let len = client.read(&mut buf)?;
 						if len == 0 {
@@ -78,25 +84,45 @@ impl Server {
 
 						match sh.ty() {
 							Ok(stupid::StupidType::UDP) => {
-								let addr = SocketAddrV4::new([0; 4].into(), 0);
-								let port = sh.remote().port();
-								let udp = UdpSocket::bind(addr.into()).unwrap();
-								udp.connect(sh.remote().into()).unwrap();
-								udp.send(data).unwrap();
-								let u = &mut udp_socks[usize::from(port)];
-								*u = Some((udp, sh.local(), Instant::now()));
-								let token = mio::Token(UDP_EVENT | usize::from(port));
+								let u = &mut udp_socks[usize::from(sh.local())];
+								if let Some((udp, last_used)) = u {
+									udp.send(data).unwrap();
+									*last_used = Instant::now();
+								} else {
+									let addr = SocketAddrV4::new([0; 4].into(), 0);
+									let udp = UdpSocket::bind(addr.into()).unwrap();
+									udp.connect(sh.remote().into()).unwrap();
+									udp.send(data).unwrap();
+									*u = Some((udp, Instant::now()));
+									let token = mio::Token(UDP_EVENT | usize::from(sh.local()));
+									poll.registry()
+										.register(&mut u.as_mut().unwrap().0, token, mio::Interest::READABLE)
+										.unwrap();
+								}
+							}
+							Ok(stupid::StupidType::TcpConnect) => {
+								let mut tcp = TcpStream::connect(sh.remote().into()).unwrap();
+								tcp.write(data).unwrap();
+								let t = &mut tcp_socks[usize::from(sh.local())];
+								*t = Some((tcp, Instant::now()));
+								let token = mio::Token(TCP_EVENT | usize::from(sh.local()));
 								poll.registry()
-									.register(&mut u.as_mut().unwrap().0, token, mio::Interest::READABLE)
+									.register(&mut t.as_mut().unwrap().0, token, mio::Interest::READABLE)
 									.unwrap();
 							}
-							Ok(stupid::StupidType::TCP) => todo!(),
+							Ok(stupid::StupidType::TCP) => {
+								let (tcp, last_used) = tcp_socks[usize::from(sh.local())]
+									.as_mut()
+									.unwrap();
+								tcp.write(data).unwrap();
+								*last_used = Instant::now();
+							},
+							Ok(stupid::StupidType::TcpFinish) => todo!(),
 							Err(_) => todo!(),
 						}
 					}
 					UDP_EVENT => {
-						if let Some((udp, local, last_used)) = udp_socks[port].as_mut() {
-							dbg!(port);
+						if let Some((udp, last_used)) = udp_socks[local_port].as_mut() {
 							let (len, addr) = udp.recv_from(&mut buf).unwrap();
 							let addr = match addr {
 								SocketAddr::V4(a) => a,
@@ -104,7 +130,7 @@ impl Server {
 							};
 
 							let data = &buf[..len];
-							let h = StupidDataHeader::new(StupidType::UDP, addr, *local, len.try_into().unwrap());
+							let h = StupidDataHeader::new(StupidType::UDP, addr, local_port.try_into().unwrap(), len.try_into().unwrap());
 
 							out[..h.byte_len()].copy_from_slice(h.as_ref());
 							out[h.byte_len()..][..data.len()].copy_from_slice(data);
@@ -113,7 +139,27 @@ impl Server {
 
 							*last_used = Instant::now();
 						} else {
-							panic!("oh no {}", port);
+							panic!("oh no {}", local_port);
+						}
+					}
+					TCP_EVENT => {
+						if let Some((tcp, last_used)) = tcp_socks[local_port].as_mut() {
+							let addr = tcp.peer_addr().unwrap();
+							let addr = match addr {
+								SocketAddr::V4(a) => a,
+								_ => unreachable!(),
+							};
+
+							let len = tcp.read(&mut buf).unwrap();
+							let data = &buf[..len];
+							let h = StupidDataHeader::new(StupidType::TCP, addr, local_port.try_into().unwrap(), len.try_into().unwrap());
+
+							out[..h.byte_len()].copy_from_slice(h.as_ref());
+							out[h.byte_len()..][..data.len()].copy_from_slice(data);
+							let out = &out[..h.byte_len() + data.len()];
+							client.write_all(out).unwrap();
+
+							*last_used = Instant::now();
 						}
 					}
 					_ => unreachable!(),

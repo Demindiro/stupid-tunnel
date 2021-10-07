@@ -20,8 +20,7 @@ impl Client {
 	}
 
 	pub fn run(self) -> Result<!, RunError> {
-
-		let tcp_connections = HashMap::<_, tcp::Tcp6Connection>::new();
+		let tcp_connections = HashMap::new();
 		let init_seq_n = 2930232;
 		let init_seq_n_offt = 239020923;
 
@@ -81,7 +80,7 @@ struct State {
 	init_seq_n_offt: u32,
 	tun: tun::Tun,
 	stupid: stupid::StupidClient,
-	tcp_connections: HashMap<(SocketAddrV4, SocketAddrV4), tcp::Tcp6Connection>,
+	tcp_connections: HashMap<u16, tcp::Tcp6Connection>,
 }
 
 impl State {
@@ -115,7 +114,7 @@ impl State {
 
 						let mut out = [0; 0x10000];
 
-						match self.tcp_connections.entry(k) {
+						match self.tcp_connections.entry(tcp.source()) {
 							Entry::Occupied(mut e) => {
 								match e.get_mut().receive(tcp, data, &mut out).unwrap() {
 									tcp::Response::Acknowledge(r) => {
@@ -134,7 +133,10 @@ impl State {
 								}
 							}
 							Entry::Vacant(e) => {
+								let ip: [u8; 4] = header.destination_address().octets()[12..].try_into().unwrap();
+								let addr = SocketAddrV4::new(ip.into(), d_port);
 								let out = if tcp.flags.synchronize() {
+									self.stupid.send(StupidType::TcpConnect, addr, s_port, &[]).unwrap();
 									let (conn, out) = tcp::Tcp6Connection::new(header, tcp, opt, self.init_seq_n, &mut out);
 									self.init_seq_n = self.init_seq_n.wrapping_add(self.init_seq_n_offt);
 									e.insert(conn);
@@ -149,7 +151,7 @@ impl State {
 										0,
 										tcp::Options::NONE,
 										&[],
-									);
+										);
 									let ip = ip::IPv6Header::new(tcp.length(&[]).unwrap(), 6, 255, header.destination_address(), header.source_address());
 									out[..ip.byte_len()].copy_from_slice(ip.as_ref());
 									out[ip.byte_len()..][..tcp.byte_len()].copy_from_slice(tcp.as_ref());
@@ -200,8 +202,16 @@ impl State {
 				self.tun.write(&out).unwrap();
 			}
 			Ok(StupidType::TCP) => {
-				todo!();
+				let mut addr = [0; 16];
+				addr[..12].copy_from_slice(&self.local_address.octets()[..12]);
+				addr[12..].copy_from_slice(&h.remote().ip().octets());
+
+				let conn = self.tcp_connections.get_mut(&h.local()).unwrap();
+				let out = conn.send(data, &mut out).unwrap();
+
+				self.tun.write(&out).unwrap();
 			}
+			Ok(_) => todo!(),
 			Err(_) => todo!(),
 		}
 	}
