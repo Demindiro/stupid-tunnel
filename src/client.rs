@@ -27,7 +27,7 @@ impl Client {
 		let mut buf = [0; 0x10000];
 
 		debug!("Connecting to server");
-		let mut server = net::TcpStream::connect(self.server_address)
+		let mut stupid = stupid::StupidClient::new(self.server_address)
 			.map_err(RunError::ConnectError)?;
 
 		debug!("Creating interface");
@@ -43,9 +43,14 @@ impl Client {
 			while !buf.is_empty() {
 				match ip::IPv6Header::from_raw(&buf[..len]) {
 					Ok((header, extra)) => {
+						let d_ip = header.destination_address();
+						let d_ip = net::Ipv4Addr::from(<[u8; 4]>::try_from(&d_ip.octets()[12..]).unwrap());
+
 						if header.next_header == 6 {
 							// TCP
 							let (tcp, opt, data) = tcp::TcpHeader::from_raw_ipv6(extra, header.source_address(), header.destination_address()).unwrap();
+
+							let d_port = tcp.destination();
 
 							let k = (
 								header.source_address(),
@@ -55,7 +60,6 @@ impl Client {
 							);
 
 							let mut out = [0; 0x10000];
-							dbg!(core::str::from_utf8(data));
 
 							match tcp_connections.entry(k) {
 								Entry::Occupied(mut e) => {
@@ -63,21 +67,16 @@ impl Client {
 										tcp::Response::Acknowledge(r) => {
 											debug!("acknowledge");
 											tun.write(r).unwrap();
-											if data.len() > 0 {
-												let out = e.get_mut().send(data, &mut out).unwrap();
-												tun.write(out).unwrap();
-											}
 										},
 										tcp::Response::Finish(r) => {
 											debug!("finish");
 											tun.write(r).unwrap();
-											if data.len() > 0 {
-												let out = e.get_mut().send(data, &mut out).unwrap();
-												tun.write(out).unwrap();
-											}
 											e.remove();
 										},
 										tcp::Response::None => (),
+									}
+									if !data.is_empty() {
+										stupid.send(stupid::StupidType::TCP, d_ip, d_port, data).unwrap();
 									}
 								}
 								Entry::Vacant(e) => {
@@ -110,23 +109,10 @@ impl Client {
 
 							let (uh, extra) = udp::UDPHeader::from_raw_ipv6(extra, header.source_address(), header.destination_address()).unwrap();
 							let data = &extra[..usize::from(uh.data_length())];
-							let _ = dbg!(header, uh, core::str::from_utf8(data));
 
-							let addr = &header.destination_address().octets()[12..];
-							let dh = stupid::StupidDataHeader::new(
-								<[u8; 4]>::try_from(addr).unwrap().try_into().unwrap(),
-								uh.destination_port(),
-								uh.data_length()
-							);
+							let d_port = uh.destination_port();
 
-							let mut buf = [0; 0x10000];
-							let mut w = &mut buf[..];
-							w[..dh.as_ref().len()].copy_from_slice(dh.as_ref());
-							w = &mut w[dh.as_ref().len()..];
-							w[..data.len()].copy_from_slice(data);
-							let len = dh.as_ref().len() + data.len();
-
-							server.write_all(&buf[..len]).unwrap();
+							stupid.send(stupid::StupidType::UDP, d_ip, d_port, data).unwrap();
 						}
 						buf = &extra[usize::from(header.payload_length())..];
 					}

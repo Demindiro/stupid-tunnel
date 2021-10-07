@@ -1,6 +1,10 @@
+mod client;
+
 use core::mem;
 use core::fmt;
 use std::net::Ipv4Addr;
+
+pub use client::StupidClient;
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -32,6 +36,7 @@ pub struct InvalidType;
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct StupidDataHeader {
+	ty: u8,
 	address: [u8; 4],
 	port: [u8; 2],
 	data_length: [u8; 2],
@@ -48,8 +53,9 @@ impl StupidDataHeader {
 		unsafe { Ok((*h.as_ptr().cast(), d)) }
 	}
 
-	pub fn new(address: Ipv4Addr, port: u16, data_length: u16) -> Self {
+	pub fn new(ty: StupidType, address: Ipv4Addr, port: u16, data_length: u16) -> Self {
 		Self {
+			ty: ty.into(),
 			address: address.octets(),
 			port: port.to_le_bytes(),
 			data_length: data_length.to_le_bytes(),
@@ -60,12 +66,20 @@ impl StupidDataHeader {
 		Ipv4Addr::from(self.address)
 	}
 
+	pub fn ty(&self) -> Result<StupidType, InvalidType> {
+		self.ty.try_into()
+	}
+
 	pub fn port(&self) -> u16 {
 		u16::from_le_bytes(self.port)
 	}
 
 	pub fn data_length(&self) -> u16 {
 		u16::from_le_bytes(self.data_length)
+	}
+
+	pub fn byte_len(&self) -> usize {
+		mem::size_of_val(self)
 	}
 }
 

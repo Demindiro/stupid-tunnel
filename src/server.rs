@@ -29,7 +29,7 @@ impl Server {
 			}
 
 			let (sh, d) = stupid::StupidDataHeader::from_raw(&buf[..len]).unwrap();
-			assert!(usize::from(sh.data_length()) <= d.len());
+			//assert!(usize::from(sh.data_length()) <= d.len());
 			let _ = dbg!(core::str::from_utf8(&d[..usize::from(sh.data_length())]));
 			
 			/*
