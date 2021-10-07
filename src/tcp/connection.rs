@@ -9,6 +9,7 @@ pub struct Tcp6Connection {
 	remote_port: u16,
 	sequence_num: u32,
 	acknowledge_num: u32,
+	closed: bool,
 }
 
 impl Tcp6Connection {
@@ -22,6 +23,7 @@ impl Tcp6Connection {
 			sequence_num,
 			// SYN increases the ACK by 1
 			acknowledge_num: tcp.sequence_num().wrapping_add(1),
+			closed: false,
 		};
 
 		let tcp = TcpHeader::new(
@@ -87,7 +89,11 @@ impl Tcp6Connection {
 		out[tcp_o..len].copy_from_slice(tcp.as_ref());
 
 		if tcp.flags.finish() {
-			Ok(Response::Finish(&out[..len]))
+			if self.closed {
+				Ok(Response::Finished(&out[..len]))
+			} else {
+				Ok(Response::Finish(&out[..len]))
+			}
 		} else {
 			Ok(Response::Acknowledge(&out[..len]))
 		}
@@ -121,10 +127,41 @@ impl Tcp6Connection {
 		
 		Ok(&out[..ip.byte_len() + tcp.byte_len() + data.len()])
 	}
+
+	pub fn close<'a>(&mut self, data: &[u8], out: &'a mut [u8]) -> Result<&'a [u8], ()> {
+
+		let tcp = TcpHeader::new(
+			(self.local_ip, self.local_port),
+			(self.remote_ip, self.remote_port),
+			self.sequence_num,
+			self.acknowledge_num,
+			Flags::new().set_acknowledge(true).set_finish(true),
+			0xffff,
+			Options::NONE,
+			data,
+		);
+
+		let ip = *IPv6Header::default()
+			.set_hop_limit(64)
+			.set_next_header(6)
+			.set_source_address(self.local_ip)
+			.set_destination_address(self.remote_ip)
+			.set_payload_length(tcp.length(data).unwrap());
+
+		out[..ip.byte_len()].copy_from_slice(ip.as_ref());
+		out[ip.byte_len()..][..tcp.byte_len()].copy_from_slice(tcp.as_ref());
+		out[ip.byte_len()..][tcp.byte_len()..][..data.len()].copy_from_slice(data);
+
+		self.sequence_num = self.sequence_num.wrapping_add(data.len() as u32);
+		self.closed = true;
+		
+		Ok(&out[..ip.byte_len() + tcp.byte_len() + data.len()])
+	}
 }
 
 pub enum Response<'a> {
 	Acknowledge(&'a [u8]),
 	Finish(&'a [u8]),
+	Finished(&'a [u8]),
 	None,
 }

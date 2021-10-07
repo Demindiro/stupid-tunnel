@@ -57,6 +57,7 @@ impl Client {
 		};
 
 		loop {
+			debug!("TCP sockets: {}", state.tcp_connections.len());
 			poll.poll(&mut events, None).unwrap();
 			for e in &events {
 				match e.token() {
@@ -116,20 +117,30 @@ impl State {
 
 						match self.tcp_connections.entry(tcp.source()) {
 							Entry::Occupied(mut e) => {
+								let mut remove = false;
 								match e.get_mut().receive(tcp, data, &mut out).unwrap() {
 									tcp::Response::Acknowledge(r) => {
 										debug!("acknowledge");
 										self.tun.write(r).unwrap();
 									},
 									tcp::Response::Finish(r) => {
-										debug!("finish");
+										debug!("closing TCP {} -> {}", s_port, addr);
 										self.tun.write(r).unwrap();
-										e.remove();
+										remove = true;
+									},
+									tcp::Response::Finished(r) => {
+										debug!("closed TCP {} -> {}", s_port, addr);
+										self.tun.write(r).unwrap();
+										remove = true;
 									},
 									tcp::Response::None => (),
 								}
 								if !data.is_empty() {
 									self.stupid.send(stupid::StupidType::TCP, addr, s_port, data).unwrap();
+								}
+								if remove {
+									self.stupid.send(StupidType::TcpFinish, addr, s_port, &[]).unwrap();
+									e.remove();
 								}
 							}
 							Entry::Vacant(e) => {
@@ -201,6 +212,7 @@ impl State {
 
 				self.tun.write(&out).unwrap();
 			}
+			Ok(StupidType::TcpConnect) => (), // TODO only send SYN,ACK on receiving this
 			Ok(StupidType::TCP) => {
 				let mut addr = [0; 16];
 				addr[..12].copy_from_slice(&self.local_address.octets()[..12]);
@@ -208,10 +220,14 @@ impl State {
 
 				let conn = self.tcp_connections.get_mut(&h.local()).unwrap();
 				let out = conn.send(data, &mut out).unwrap();
-
 				self.tun.write(&out).unwrap();
 			}
-			Ok(_) => todo!(),
+			Ok(StupidType::TcpFinish) => {
+				debug!("closing TCP {} -> {}", h.local(), h.remote());
+				let conn = self.tcp_connections.get_mut(&h.local()).unwrap();
+				let out = conn.close(data, &mut out).unwrap();
+				self.tun.write(&out).unwrap();
+			}
 			Err(_) => todo!(),
 		}
 	}
